@@ -1,22 +1,25 @@
 def COLOR_MAP = [
-    SUCCESS: '#36a64f',
-    FAILURE: '#ff0000',
-    ABORTED: '#cccccc',
-    UNSTABLE: '#ffcc00',
+    'SUCCESS': 'good',
+    'FAILURE': 'danger',
 ]
 
 pipeline {
     agent any
+    tools {
+        maven "MAVEN3"
+        jdk "OracleJDK11"
+    }
 
     environment {
         SNAP_REPO = 'vprofile-snapshot'
-        NEXUS_USER = credentials('nexus-credentials-id').username
-        NEXUS_PASS = credentials('nexus-credentials-id').password
+        NEXUS_USER = 'admin'
+        NEXUS_PASS = 'admin123'
         RELEASE_REPO = 'vprofile-release'
         CENTRAL_REPO = 'vpro-maven-central'
         NEXUS_IP = '34.125.126.192'
         NEXUS_PORT = '8081'
         NEXUS_GRP_REPO = 'vpro-maven-group'
+        NEXUS_LOGIN = 'nexuslogin'
         SONARSERVER = 'sonarserver'
         SONARSCANNER = 'sonarscanner'
     }
@@ -24,14 +27,7 @@ pipeline {
     stages {
         stage('Build'){
             steps {
-                script {
-                    withMaven(
-                        maven: 'MAVEN3',
-                        jdk: 'OracleJDK11'
-                    ) {
-                        sh 'mvn -s settings.xml -DskipTests install'
-                    }
-                }
+                sh 'mvn -s settings.xml -DskipTests install'
             }
             post {
                 success {
@@ -39,86 +35,69 @@ pipeline {
                     archiveArtifacts artifacts: '**/*.war'
                 }
             }
+            
         }
 
         stage('Test') {
             steps {
-                script {
-                    withMaven(
-                        maven: 'MAVEN3',
-                        jdk: 'OracleJDK11'
-                    ) {
-                        sh 'mvn -s settings.xml test'
-                    }
-                }
+                sh 'mvn -s settings.xml test'
             }
         }
 
         stage('Checkstyle Analysis') {
             steps {
-                script {
-                    withMaven(
-                        maven: 'MAVEN3',
-                        jdk: 'OracleJDK11'
-                    ) {
-                        sh 'mvn -s settings.xml checkstyle:checkstyle'
-                    }
-                }
+                sh 'mvn -s settings.xml checkstyle:checkstyle'
             }
         }
 
         stage ('Sonar Analysis') {
+            environment {
+                scannerHome = tool "${SONARSCANNER}" 
+            }
             steps {
-                script {
-                    withSonarQubeEnv(SONARSERVER) {
-                        sh "${tool(SONARSCANNER)}/bin/sonar-scanner \
-                            -Dsonar.projectKey=vprofile \
-                            -Dsonar.projectName=vprofile \
-                            -Dsonar.projectVersion=1.0 \
-                            -Dsonar.sources=src/ \
-                            -Dsonar.java.binaries=target/test-classes/com/visualpathit/account/controllerTest/ \
-                            -Dsonar.junit.reportsPath=target/surefire-reports/ \
-                            -Dsonar.jacoco.reportsPath=target/jacoco.exec \
-                            -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml"
-                    }
+                withSonarQubeEnv("${SONARSERVER}") {
+                    sh '''${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=vprofile \
+                    -Dsonar.projectName=vprofile \
+                    -Dsonar.projectVersion=1.0 \
+                    -Dsonar.sources=src/ \
+                    -Dsonar.java.binaries=target/test-classes/com/visualpathit/account/controllerTest/ \
+                    -Dsonar.junit.reportsPath=target/surefire-reports/ \
+                    -Dsonar.jacoco.reportsPath=target/jacoco.exec \
+                    -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml'''
                 }
             }
         }
 
         stage ("Quality Gate") {
             steps {
-                script {
-                    timeout(time: 1, unit: 'HOURS') {
-                        waitForQualityGate abortPipeline: true
-                    }
+                timeout(time:1, unit: 'HOURS') {
+                    waitForQualityGate abortPipeline: true
                 }
             }
         }
 
         stage ("Upload Artifact") {
             steps {
-                script {
-                    nexusArtifactUploader(
-                        nexusVersion: 'nexus3',
-                        protocol: 'http',
-                        nexusUrl: "${NEXUS_IP}:${NEXUS_PORT}",  
-                        groupId: 'QA',
-                        version: "${env.BUILD_ID}-${env.BUILD_TIMESTAMP}",
-                        repository: RELEASE_REPO,
-                        credentialsId: "${NEXUS_LOGIN}", 
-                        artifacts: [
-                            [artifactId: 'vproapp',
-                            classifier: '',
-                            file: 'target/vprofile-v2.war',
-                            type: 'war']
-                        ]
-                    )
-                }
+                nexusArtifactUploader(
+                  nexusVersion: 'nexus3',
+                  protocol: 'http',
+                  nexusUrl: "${NEXUS_IP}:${NEXUS_PORT}",  
+                  groupId: 'QA',
+                  version: "${env.BUILD_ID}-${env.BUILD_TIMESTAMP}",
+                  repository: "${RELEASE_REPO}",
+                  credentialsId: "${NEXUS_LOGIN}", 
+                  artifacts: [
+                    [artifactId: 'vproapp',
+                     classifier: '',
+                     file: 'target/vprofile-v2.war',
+                     type: 'war']
+                  ]
+                )
             }
         }
     }
     post {
-        always {
+        always{
             echo 'Slack Notifications'
             slackSend channel: '#cicd',
                 color: COLOR_MAP[currentBuild.currentResult],
@@ -126,3 +105,4 @@ pipeline {
         }
     }
 }
+
