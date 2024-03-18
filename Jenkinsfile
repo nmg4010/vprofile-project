@@ -1,8 +1,13 @@
+def COLOR_MAP = [
+    'SUCCESS': 'good',
+    'FAILURE': 'danger',
+]
+
 pipeline {
     agent any
     tools {
         maven "MAVEN3"
-        jdk "OracleJDK11"
+        jdk "OracleJDK17"
     }
 
     environment {
@@ -11,7 +16,7 @@ pipeline {
         NEXUS_PASS = 'admin123'
         RELEASE_REPO = 'vprofile-release'
         CENTRAL_REPO = 'vpro-maven-central'
-        NEXUS_IP = '34.125.126.192'
+        NEXUS_IP = '172.31.95.74'
         NEXUS_PORT = '8081'
         NEXUS_GRP_REPO = 'vpro-maven-group'
         NEXUS_LOGIN = 'nexuslogin'
@@ -62,13 +67,41 @@ pipeline {
                 }
             }
         }
-    
-        stage("Quality Gate") {
+
+        stage ("Quality Gate") {
             steps {
                 timeout(time:1, unit: 'HOURS') {
-                    waitforQualityGate abortPipeline: true
+                    waitForQualityGate abortPipeline: true
                 }
             }
+        }
+
+        stage ("Upload Artifact") {
+            steps {
+                nexusArtifactUploader(
+                  nexusVersion: 'nexus3',
+                  protocol: 'http',
+                  nexusUrl: "${NEXUS_IP}:${NEXUS_PORT}",  
+                  groupId: 'QA',
+                  version: "${env.BUILD_ID}-${env.BUILD_TIMESTAMP}",
+                  repository: "${RELEASE_REPO}",
+                  credentialsId: "${NEXUS_LOGIN}", 
+                  artifacts: [
+                    [artifactId: 'vproapp',
+                     classifier: '',
+                     file: 'target/vprofile-v2.war',
+                     type: 'war']
+                  ]
+                )
+            }
+        }
+    }
+    post {
+        always{
+            echo 'Slack Notifications'
+            slackSend channel: '#cicd',
+                color: COLOR_MAP[currentBuild.currentResult],
+                message: "*${currentBuild.currentResult}:* Job ${env.JOB_NAME} build ${env.BUILD_NUMBER} \n More info at: ${env.BUILD_URL}"
         }
     }
 }
